@@ -1,0 +1,12 @@
+---
+- name: Include variables
+  include_vars: dir=vars
+
+- name: Create bootstrap token with kubeadm {{ ansible_facts['nodename'] }}
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: kubeadm_join_command
+
+- name: Generate kubeadm join command
+  ansible.builtin.add_host:
+    name: "kubeadm"
+    join_command: "{{ kubeadm_join_command.stdout }}"

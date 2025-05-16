@@ -1,0 +1,144 @@
+---
+- name: Include variables
+  include_vars: dir=vars
+
+- name: stop auto update service
+  ansible.builtin.systemd:
+    name: unattended-upgrades
+    state: stopped
+  when: ansible_distribution == 'Ubuntu' or ansible_distribution_version == '22.04'
+
+- name: add public key to authorized_keys
+  ansible.posix.authorized_key:
+    user: "{{ user }}"
+    state: present
+    key: "{{ lookup('file', '~/.ssh/skylab.pub') }}"
+
+- name: Set hostname
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Collect hostnames and IPs
+  set_fact:
+    all_host_data: "{{ all_host_data | default([]) + [{'hostname': item, 'ip': hostvars[item]['ansible_default_ipv4']['address']}] }}"
+  loop: "{{ groups['all'] }}"
+  run_once: yes
+
+- name: Add hostname and IP to /etc/hosts
+  ansible.builtin.template:
+    src: files/host_entry.j2
+    dest: /etc/hosts
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure timezone on all nodes
+  community.general.timezone:
+    name: "{{ timezone }}"
+
+- name: Ensure chrony package is installed
+  ansible.builtin.package:
+    name: chrony
+    state: present
+
+- name: Enable and start chronyd service
+  ansible.builtin.service:
+    name: chronyd
+    state: started
+    enabled: yes
+
+- name: Synchronize time manually
+  ansible.builtin.shell: chronyc sources
+
+- name: Turn off swap
+  ansible.builtin.command: swapoff -a
+  changed_when: true
+  when: ansible_swaptotal_mb > 0
+
+- name: Disable swap
+  ansible.builtin.lineinfile:
+    path: "/etc/fstab"
+    regexp: '\sswap\s'
+    state: absent
+
+- name: Check if IPv6 is currently enabled
+  ansible.builtin.command: sysctl net.ipv6.conf.all.disable_ipv6
+  register: ipv6_status
+  changed_when: false
+  check_mode: no
+
+- name: Disable IPv6 if enabled
+  block:
+    - name: Disable IPv6 in sysctl
+      ansible.builtin.sysctl:
+        name: net.ipv6.conf.all.disable_ipv6
+        value: "1"
+        state: present
+        reload: yes
+
+    - name: Ensure IPv6 is disabled at boot
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        line: "net.ipv6.conf.all.disable_ipv6 = 1"
+        state: present
+  when: ipv6_status.stdout.split("=")[1].strip() == "0"
+
+- name: Load the required kernel modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - br_netfilter
+    - overlay
+
+- name: Persist kernel module loading
+  ansible.builtin.copy:
+    dest: "/etc/modules-load.d/k8s.conf"
+    content: |
+      br_netfilter
+      overlay
+
+- name: Tune sysctl parameters  in /proc and the sysctl file
+  ansible.builtin.sysctl:
+    name: "{{ item }}"
+    value: "1"
+    sysctl_set: yes
+    state: present
+  with_items:
+    - net.ipv4.ip_forward
+    - net.bridge.bridge-nf-call-iptables
+    - net.bridge.bridge-nf-call-ip6tables
+
+- name: Include k8s_prep_debian.yml
+  include_tasks: k8s_prep_debian.yml
+  when:
+    - ansible_facts.os_family == "Debian"
+
+- name: Include k8s_prep_redhat.yml
+  include_tasks: k8s_prep_redhat.yml
+  when:
+    - ansible_facts.os_family == "RedHat"
+
+- name: Dump default configuration for containerd
+  ansible.builtin.shell: containerd config default > /etc/containerd/config.toml
+
+- name: Change SystemdCgroup to true
+  replace:
+    path: /etc/containerd/config.toml
+    regexp: '(SystemdCgroup\s*=\s*)false'
+    replace: '\1true'
+    backup: yes
+
+- name: Configure crictl to use containerd
+  ansible.builtin.copy:
+    src: files/crictl.yaml
+    dest: /etc/crictl.yaml
+
+- name: Enable and start the required services (containerd.io, kubelet)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: yes
+    state: restarted
+  with_items:
+    - containerd
+    - kubelet

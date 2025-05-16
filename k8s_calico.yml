@@ -1,0 +1,32 @@
+---
+- name: Include variables
+  include_vars: dir=vars
+
+- name: Download Calico manifest
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/projectcalico/calico/v3.29.3/manifests/calico.yaml"
+    dest: "/tmp/calico.yaml"
+
+- name: Uncomment and change CALICO_IPV4POOL_CIDR
+  ansible.builtin.lineinfile:
+    path: /tmp/calico.yaml
+    regexp: '^            # - name: CALICO_IPV4POOL_CIDR'
+    line: '            - name: CALICO_IPV4POOL_CIDR'
+    state: present
+
+- name: Change value of CALICO_IPV4POOL_CIDR to a variable POD_NETWORK
+  ansible.builtin.lineinfile:
+    path: /tmp/calico.yaml
+    regexp: '^            #   value: "192.168.0.0/16"'
+    line: '              value: "{{ pod_network }}"'
+    state: present
+
+- name: Apply Calico manifest
+  ansible.builtin.command: "kubectl create -f /tmp/calico.yaml"
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Remove temporary Calico manifest file
+  ansible.builtin.file:
+    path: "/tmp/calico.yaml"
+    state: absent

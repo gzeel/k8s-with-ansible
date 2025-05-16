@@ -1,0 +1,6 @@
+---
+- name: Include variables
+  include_vars: dir=vars
+
+- name: Join {{ ansible_facts['nodename'] }} to the k8s cluster
+  ansible.builtin.command: "{{ hostvars['kubeadm']['join_command'] }}"

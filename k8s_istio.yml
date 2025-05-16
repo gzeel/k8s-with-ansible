@@ -1,0 +1,110 @@
+---
+- name: Include variables
+  include_vars: dir=vars
+
+- name: Create download directory
+  file:
+    path: "{{ istio_download_location }}"
+    state: directory
+    mode: '0755'
+
+- name: Check if Istio is already installed
+  shell: "{{ kubectl_bin }} get namespace istio-system"
+  register: istio_ns_check
+  ignore_errors: true
+  changed_when: false
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Download Istio
+  when: istio_ns_check is failed
+  get_url:
+    url: "https://github.com/istio/istio/releases/download/{{ istio_version }}/istio-{{ istio_version }}-linux-amd64.tar.gz"
+    dest: "{{ istio_download_location }}/istio.tar.gz"
+    mode: '0644'
+  register: istio_download
+
+- name: Extract Istio
+  when: istio_download is succeeded
+  unarchive:
+    src: "{{ istio_download_location }}/istio.tar.gz"
+    dest: "{{ istio_download_location }}"
+    remote_src: yes
+  register: istio_extract
+
+- name: Copy istioctl to /usr/bin
+  when: istio_extract is succeeded
+  copy:
+    src: "{{ istio_download_location }}/istio-{{ istio_version }}/bin/istioctl"
+    dest: "/usr/bin/istioctl"
+    mode: '0755'
+    remote_src: yes
+  register: istio_copy
+
+- name: Create istio-system namespace
+  when: istio_ns_check is failed
+  command: "kubectl create namespace istio-system"
+  ignore_errors: true  # In case the namespace already exists
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Install Istio demo profile with no gateways (alternative)
+  when: istio_extract is succeeded 
+  shell: "{{ istioctl_bin }} install -f {{ istio_install_dir }}/samples/bookinfo/demo-profile-no-gateways.yaml -y"
+  register: istio_install_result_no_gw
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Display Istio installation result
+  debug:
+    var: istio_install_result.stdout_lines if demo_profile_flag else istio_install_result_no_gw.stdout_lines
+
+- name: Enable sidecar injection for default namespace
+  shell: "{{ kubectl_bin }} label namespace default istio-injection=enabled --overwrite"
+  register: sidecar_result
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Display sidecar injection result
+  debug:
+    var: sidecar_result.stdout
+
+- name: Check if Gateway API CRDs are installed
+  shell: "{{ kubectl_bin }} get crd gateways.gateway.networking.k8s.io"
+  register: gateway_crd_check
+  ignore_errors: true
+  changed_when: false
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Install Gateway API CRDs if not present
+  when: gateway_crd_check is failed
+  shell: "{{ kubectl_bin }} kustomize \"github.com/kubernetes-sigs/gateway-api/config/crd?ref=v1.2.1\" | {{ kubectl_bin }} apply -f -"
+  register: gateway_crd_install
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Display Gateway API CRD installation result
+  when: gateway_crd_check is failed
+  debug:
+    var: gateway_crd_install.stdout_lines
+
+- name: Apply Bookinfo sample
+  shell: "{{ kubectl_bin }} apply -f {{ istio_install_dir }}/samples/bookinfo/platform/kube/bookinfo.yaml"
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Apply Bookinfo gateway
+  shell: "{{ kubectl_bin }} apply -f {{ istio_install_dir }}/samples/bookinfo/gateway-api/bookinfo-gateway.yaml"
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Annotate Gateway with ClusterIP
+  shell: "{{ kubectl_bin }} annotate gateway bookinfo-gateway networking.istio.io/service-type=ClusterIP --namespace=default"
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Apply Addons
+  shell: "{{ kubectl_bin }} apply -f {{ istio_install_dir }}samples/addons"
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"

@@ -1,0 +1,27 @@
+---
+- name: Include variables
+  include_vars: dir=vars
+
+- name: Apply MetalLB manifest
+  ansible.builtin.command: "kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml"
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Wait for MetalLB pods to be ready
+  ansible.builtin.shell: "kubectl wait --namespace metallb-system --for=condition=ready pod --selector=app=metallb --timeout=90s"
+  register: wait_result
+  retries: 5
+  delay: 10
+  until: wait_result.rc == 0
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Apply MetalLB config 1
+  ansible.builtin.command: "kubectl apply -f https://raw.githubusercontent.com/gzeel/k8s-config/refs/heads/main/metallb.yaml"
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+- name: Apply MetalLB config 2
+  ansible.builtin.command: "kubectl apply -f https://raw.githubusercontent.com/gzeel/k8s-config/refs/heads/main/metallb2.yaml"
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"

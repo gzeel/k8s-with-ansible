@@ -1,0 +1,48 @@
+---
+- name: Prepare all nodes for the creation of the Kubernetes cluster
+  hosts: all
+  become: yes
+  gather_facts: True
+  tasks:
+    - name: Include k8s_prep.yml
+      include_tasks: k8s_prep.yml
+
+- name: Create the Kubernetes cluster
+  hosts: control
+  become: yes
+  gather_facts: True
+  tasks:
+    - name: Include k8s_cp_init.yml
+      include_tasks: k8s_cp_init.yml
+
+    - name: Include k8s_calico.yml
+      include_tasks: k8s_calico.yml
+
+    - name: Include k8s_joincommand.yml
+      include_tasks: k8s_joincommand.yml
+
+- name: Join nodes to the Kubernetes cluster
+  hosts: workers
+  become: yes
+  gather_facts: True
+  tasks:
+    - name: Include k8s_join_node.yml
+      include_tasks: k8s_join_node.yml
+
+- name: Install Helm Ingress-Nginx MetalLB and Istio
+  hosts: control
+  become: yes
+  gather_facts: True
+  tasks:
+    - name: Include k8s_helm.yml
+      include_tasks: k8s_helm.yml
+
+    - name: Include k8s_ingress-nginx.yml
+      include_tasks: k8s_ingress-nginx.yml
+
+    - name: Include k8s_metallb.yml
+      include_tasks: k8s_metallb.yml
+
+    - name: Include k8s_istio.yml
+      include_tasks: k8s_istio.yml
+

@@ -1,0 +1,85 @@
+---
+- name: Determine Ubuntu version name
+  set_fact:
+    distro_version_name: >-
+      {%- set version_to_name_map = {
+            '20.04': 'focal',
+            '21.04': 'hirsute',
+            '21.10': 'impish',
+            '22.04': 'jammy',
+            '24.04': 'noble'
+        } -%}
+      {{ version_to_name_map[ansible_distribution_version] | default('Unknown') }}
+  when: ansible_distribution == 'Ubuntu'
+
+- name: Determine Debian version name
+  set_fact:
+    distro_version_name: >-
+      {%- set version_to_name_map = {
+            '11': 'bullseye',
+            '12': 'bookworm',
+            '13': 'trixie'  # Note: This is a placeholder for future releases
+        } -%}
+      {{ version_to_name_map[ansible_distribution_version.split('.')[0]] | default('Unknown') }}
+  when: ansible_distribution == 'Debian'
+
+- name: Update cache
+  apt:
+    update_cache: yes
+
+- name: Upgrade all packages on servers
+  apt:
+    name: "*"
+    state: latest
+
+- name: Installing Prerequisites for Kubernetes
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg-agent
+      - vim
+      - software-properties-common
+    state: present
+
+- name: add Docker apt-key
+  get_url:
+    url: https://download.docker.com/linux/{{ ansible_distribution | lower}}/gpg
+    dest: /etc/apt/keyrings/docker-apt-keyring.asc
+    mode: '0644'
+    force: true
+
+- name: Add Docker Repository
+  apt_repository:
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker-apt-keyring.asc] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ distro_version_name }} stable"
+    state: present
+    filename: docker
+    mode: '0600'
+
+- name: add Kubernetes apt-key
+  get_url:
+    url: https://pkgs.k8s.io/core:/stable:/{{ k8s_version }}/deb/Release.key
+    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+    mode: '0644'
+    force: true
+
+- name: add Kubernetes' APT repository
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/{{ k8s_version }}/deb/ /"
+    state: present
+    update_cache: yes
+
+- name: Installing Containerd and Kubernetes Cluster Packages.
+  apt:
+    name:
+      - containerd.io
+      - kubeadm
+      - kubectl
+      - kubelet
+    state: present
+
+- name: Enable service kubelet, and enable persistently
+  service:
+    name: kubelet
+    enabled: yes
